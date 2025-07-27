@@ -29,7 +29,7 @@ class Card(Base):
     toughness = Column(String(10))  # Can be '*' or number
     
     # Set and rarity information
-    set_code = Column(String(10), nullable=False, index=True)
+    set_code = Column(String(10), nullable=True, index=True)
     set_name = Column(String(255))
     rarity = Column(String(20), index=True)
     collector_number = Column(String(20))

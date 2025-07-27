@@ -10,6 +10,7 @@ import imagehash
 from PIL import Image
 import json
 import logging
+import re
 from typing import Dict, List, Optional, Tuple
 from difflib import SequenceMatcher
 from config import settings
@@ -395,6 +396,9 @@ class FuzzyMatcher:
     @staticmethod
     def _normalize_name(name: str) -> str:
         """Normalize card name for better matching"""
+        if not name:
+            return ""
+        
         # Convert to lowercase
         normalized = name.lower().strip()
         
@@ -506,7 +510,7 @@ class HybridIdentifier:
                 method = 'api_exact'
                 
                 # Lower confidence if name doesn't match exactly
-                if card_data.get('name', '').lower() != card_name.lower():
+                if card_name and card_data.get('name', '').lower() != card_name.lower():
                     confidence = self.method_weights['api_fuzzy']
                     method = 'api_fuzzy'
                 
@@ -554,7 +558,7 @@ class HybridIdentifier:
             potential_names = self._extract_potential_names(extracted_text)
             
             for name in potential_names:
-                if len(name) > 3:  # Reasonable minimum length
+                if name and len(name) > 3:  # Reasonable minimum length
                     api_result = self._try_api_identification(name)
                     if api_result:
                         # Lower confidence since this is indirect
@@ -582,14 +586,14 @@ class HybridIdentifier:
             # Skip lines that are clearly not names
             if (len(line) < 3 or 
                 line.isdigit() or 
-                re.match(r'^[\{\}/\*\d\s]+
+                re.match(r'^[\{\}/\*\d\s]+$', line)):
                 continue
             
             # Clean the line
             cleaned = re.sub(r'[^\w\s\-\']', '', line)
             cleaned = ' '.join(cleaned.split())
             
-            if len(cleaned) > 2:
+            if cleaned and len(cleaned) > 2:
                 potential_names.append(cleaned)
         
         return potential_names[:5]  # Limit to top 5 candidates
@@ -723,18 +727,7 @@ def merge_identification_results(results: List[Dict]) -> Dict:
     best_result['method'] = 'consensus'
     best_result['supporting_methods'] = [r['method'] for r in best_group]
     
-    return best_result, line) or
-                line.lower() in ['creature', 'instant', 'sorcery', 'enchantment', 'artifact']):
-                continue
-            
-            # Clean the line
-            cleaned = re.sub(r'[^\w\s\-\']', '', line)
-            cleaned = ' '.join(cleaned.split())
-            
-            if len(cleaned) > 2:
-                potential_names.append(cleaned)
-        
-        return potential_names[:5]  # Limit to top 5 candidates
+    return best_result
 
 class CardDatabaseBuilder:
     """Builds and maintains local card databases for faster matching"""

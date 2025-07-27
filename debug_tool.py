@@ -27,29 +27,29 @@ class DebugTool:
     
     def debug_pdf(self, pdf_path: str, save_debug_images: bool = True):
         """Debug a PDF file step by step"""
-        print(f"🔍 Debugging PDF: {pdf_path}")
+        print(f"[DEBUG] Debugging PDF: {pdf_path}")
         
         if not os.path.exists(pdf_path):
-            print(f"❌ PDF file not found: {pdf_path}")
+            print(f"[ERROR] PDF file not found: {pdf_path}")
             return
         
         # Step 1: Analyze PDF
-        print("\n📄 Step 1: PDF Analysis")
+        print("\n[PAGE] Step 1: PDF Analysis")
         pdf_type = self.pdf_processor.detect_pdf_type(pdf_path)
         print(f"   PDF Type: {pdf_type}")
         
         # Step 2: Convert to images
-        print("\n🖼️ Step 2: Image Conversion")
+        print("\n[IMAGE] Step 2: Image Conversion")
         images = self.pdf_processor.convert_pdf_to_images(pdf_path, pdf_type)
         print(f"   Pages converted: {len(images)}")
         
         if not images:
-            print("❌ No images extracted from PDF")
+            print("[ERROR] No images extracted from PDF")
             return
         
         # Process each page
         for page_idx, page_image in enumerate(images):
-            print(f"\n📄 Page {page_idx + 1}:")
+            print(f"\n[PAGE] Page {page_idx + 1}:")
             self.debug_page(page_image, page_idx, save_debug_images, pdf_path)
     
     def debug_page(self, page_image: np.ndarray, page_idx: int, 
@@ -67,17 +67,17 @@ class DebugTool:
                 page_filename = f"{base_name}_page_{page_idx+1:03d}_original.png"
             
             cv2.imwrite(os.path.join(debug_dir, page_filename), page_image)
-            print(f"   💾 Saved: {page_filename}")
+            print(f"   [SAVED] Saved: {page_filename}")
         
         # Step 3: Layout Analysis
-        print("   🔍 Layout Analysis:")
+        print("   [DEBUG] Layout Analysis:")
         layout = GridLayoutAnalyzer.analyze_page_layout(page_image)
         print(f"      Suggested grid: {layout['suggested_rows']}x{layout['suggested_cols']}")
         print(f"      Confidence: {layout['confidence']:.2f}")
         print(f"      H peaks: {layout['h_peaks']}, V peaks: {layout['v_peaks']}")
         
         # Step 4: Card Detection
-        print("   🎯 Card Detection:")
+        print("   [DETECT] Card Detection:")
         detected_cards = self.card_detector.detect_card_grid_advanced(
             page_image, layout['suggested_rows'], layout['suggested_cols']
         )
@@ -85,14 +85,14 @@ class DebugTool:
         
         if len(detected_cards) == 0:
             # Try alternative detection methods
-            print("   🔄 Trying alternative detection...")
+            print("   [RETRY] Trying alternative detection...")
             
             # Try different grid sizes
             for rows in [2, 3, 4, 5]:
                 for cols in [2, 3, 4, 5]:
                     cards = self.card_detector.detect_card_grid_advanced(page_image, rows, cols)
                     if len(cards) > 0:
-                        print(f"      ✅ Found {len(cards)} cards with {rows}x{cols} grid")
+                        print(f"      [SUCCESS] Found {len(cards)} cards with {rows}x{cols} grid")
                         detected_cards = cards
                         break
                 if len(detected_cards) > 0:
@@ -100,7 +100,7 @@ class DebugTool:
         
         # Step 5: Save detected cards and test OCR
         if detected_cards and save_images:
-            print("   📋 Testing OCR on detected cards:")
+            print("   [OCR] Testing OCR on detected cards:")
             
             for i, card_image in enumerate(detected_cards[:5]):  # Test first 5 cards
                 # Save card image
@@ -129,22 +129,22 @@ class DebugTool:
     
     def debug_single_image(self, image_path: str):
         """Debug a single card image"""
-        print(f"🔍 Debugging image: {image_path}")
+        print(f"[DEBUG] Debugging image: {image_path}")
         
         if not os.path.exists(image_path):
-            print(f"❌ Image file not found: {image_path}")
+            print(f"[ERROR] Image file not found: {image_path}")
             return
         
         # Load image
         image = cv2.imread(image_path)
         if image is None:
-            print(f"❌ Could not load image: {image_path}")
+            print(f"[ERROR] Could not load image: {image_path}")
             return
         
-        print(f"   📐 Image size: {image.shape}")
+        print(f"   [INFO] Image size: {image.shape}")
         
         # Test OCR
-        print("   🔤 Testing OCR:")
+        print("   [OCR] Testing OCR:")
         try:
             ocr_results = self.text_extractor.extract_card_attributes(image)
             
@@ -164,19 +164,19 @@ class DebugTool:
     
     def test_ocr_engines(self, image_path: str):
         """Test different OCR engines on an image"""
-        print(f"🧪 Testing OCR engines on: {image_path}")
+        print(f"[TEST] Testing OCR engines on: {image_path}")
         
         if not os.path.exists(image_path):
-            print(f"❌ Image file not found: {image_path}")
+            print(f"[ERROR] Image file not found: {image_path}")
             return
         
         image = cv2.imread(image_path)
         if image is None:
-            print(f"❌ Could not load image: {image_path}")
+            print(f"[ERROR] Could not load image: {image_path}")
             return
         
         # Test EasyOCR
-        print("\n📖 EasyOCR Results:")
+        print("\n[RESULTS] EasyOCR Results:")
         try:
             extractor_easy = MTGTextExtractor(ocr_engine='easyocr')
             results_easy = extractor_easy.extract_card_attributes(image)
@@ -189,7 +189,7 @@ class DebugTool:
             print(f"   Error: {str(e)}")
         
         # Test Tesseract
-        print("\n📖 Tesseract Results:")
+        print("\n[RESULTS] Tesseract Results:")
         try:
             extractor_tess = MTGTextExtractor(ocr_engine='tesseract')
             results_tess = extractor_tess.extract_card_attributes(image)
@@ -203,12 +203,12 @@ class DebugTool:
     
     def visualize_detection(self, pdf_path: str, page_num: int = 0):
         """Create visualization of card detection process"""
-        print(f"🎨 Creating detection visualization for: {pdf_path}")
+        print(f"[VIS] Creating detection visualization for: {pdf_path}")
         
         # Convert PDF to image
         images = self.pdf_processor.convert_pdf_to_images(pdf_path)
         if not images or page_num >= len(images):
-            print(f"❌ Could not get page {page_num}")
+            print(f"[ERROR] Could not get page {page_num}")
             return
         
         page_image = images[page_num]
@@ -241,8 +241,8 @@ class DebugTool:
         vis_filename = f"detection_visualization_page_{page_num+1}.png"
         cv2.imwrite(os.path.join(debug_dir, vis_filename), vis_image)
         
-        print(f"   💾 Saved visualization: {vis_filename}")
-        print(f"   🎯 Detected {len(detected_cards)} cards")
+        print(f"   [SAVED] Saved visualization: {vis_filename}")
+        print(f"   [DETECT] Detected {len(detected_cards)} cards")
 
 def main():
     """Main function for command-line usage"""

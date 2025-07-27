@@ -141,6 +141,8 @@ class DuplicateHandler:
         best_similarity = 0.0
         
         for candidate in candidates:
+            if not candidate.name:
+                continue
             candidate_normalized = self._normalize_name(candidate.name)
             
             # Calculate multiple similarity metrics
@@ -453,9 +455,9 @@ class DuplicateAnalyzer:
                 similarity = dup['similarity_score']
                 
                 # Classify duplicate cause
-                if similarity > 0.9 and original_name.lower() != dup_name.lower():
+                if similarity > 0.9 and original_name and dup_name and original_name.lower() != dup_name.lower():
                     causes['ocr_errors'] += 1
-                elif original_name.lower() == dup_name.lower():
+                elif original_name and dup_name and original_name.lower() == dup_name.lower():
                     causes['legitimate_reprints'] += 1
                 elif 0.7 <= similarity <= 0.9:
                     causes['image_quality'] += 1
