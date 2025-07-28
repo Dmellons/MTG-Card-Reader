@@ -26,9 +26,13 @@ class Settings(BaseSettings):
     BATCH_SIZE: int = 1000
     
     # OCR Configuration
-    OCR_ENGINE: str = "both"  # Options: "easyocr", "tesseract", "both"
-    OCR_CONFIDENCE_THRESHOLD: float = 0.5
+    OCR_ENGINE: str = "easyocr"  # Options: "easyocr", "tesseract", "both"
+    OCR_CONFIDENCE_THRESHOLD: float = 0.2  # Very low threshold - let post-processing handle quality
     USE_CLOUD_OCR: bool = False
+    
+    # Enhanced OCR Settings
+    OCR_RETRY_COUNT: int = 3
+    OCR_PREPROCESSING_AGGRESSIVE: bool = True
     
     # Card Detection Settings
     EXPECTED_GRID_ROWS: int = 3

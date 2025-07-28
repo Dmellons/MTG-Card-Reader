@@ -313,7 +313,7 @@ class ExportManager:
             # Extract main types
             main_types = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land']
             for card_type in main_types:
-                if card_type.lower() in type_line.lower():
+                if type_line and isinstance(type_line, str) and card_type.lower() in type_line.lower():
                     type_counts[card_type] = type_counts.get(card_type, 0) + 1
         
         # Confidence analysis

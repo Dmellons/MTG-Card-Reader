@@ -148,8 +148,9 @@ class CardDetector:
             try:
                 x, y, w, h = card_info['bbox']
                 
-                # Add small padding around the card
-                padding = max(5, min(w, h) // 50)
+                # Add very generous padding around the card to ensure titles aren't cut off
+                # Especially important for off-center or tilted cards
+                padding = max(25, min(w, h) // 12)  # Increased from //20 to //12
                 x_padded = max(0, x - padding)
                 y_padded = max(0, y - padding)
                 w_padded = min(image.shape[1] - x_padded, w + 2 * padding)
@@ -323,9 +324,9 @@ class CardDetector:
                     y1, y2 = y_bounds[row], y_bounds[row + 1]
                     x1, x2 = x_bounds[col], x_bounds[col + 1]
                     
-                    # Add padding to avoid white borders
-                    padding_x = max(10, (x2 - x1) // 20)  # 5% padding
-                    padding_y = max(10, (y2 - y1) // 20)  # 5% padding
+                    # Very minimal padding removal to preserve maximum card area (especially title area)
+                    padding_x = max(1, (x2 - x1) // 100)  # Only 1% padding removal
+                    padding_y = max(1, (y2 - y1) // 100)  # Only 1% padding removal
                     
                     y1 += padding_y
                     y2 -= padding_y
@@ -337,6 +338,8 @@ class CardDetector:
                         if self._is_valid_card_region(card):
                             cards.append(card)
                             logger.debug(f"Extracted card {len(cards)}: {card.shape} at ({x1},{y1})")
+                            # Save debug image of extracted card
+                            self._save_debug_card_image(card, len(cards), row, col)
                         
             return cards
         
@@ -572,10 +575,10 @@ class CardDetector:
             try:
                 x, y, w, h = card_info['bbox']
                 
-                # Add padding around the detected border
-                # This ensures we get the full card including any outer border
-                padding_x = max(3, w // 100)  # Minimal padding proportional to card size
-                padding_y = max(3, h // 100)
+                # Add very generous padding around the detected border
+                # This ensures we get the full card including title area for off-center cards
+                padding_x = max(20, w // 20)  # Further increased padding proportional to card size
+                padding_y = max(20, h // 20)  # Further increased padding proportional to card size
                 
                 x_padded = max(0, x - padding_x)
                 y_padded = max(0, y - padding_y)
@@ -962,6 +965,20 @@ class CardDetector:
         logger.debug(f"Valid card region: {width}x{height}, ratio={aspect_ratio:.2f}, variance={variance:.1f}")
         return True
     
+    def _save_debug_card_image(self, card_image: np.ndarray, card_num: int, row: int, col: int):
+        """Save individual card image for debugging purposes"""
+        try:
+            import os
+            debug_dir = "./data/debug_cards"
+            os.makedirs(debug_dir, exist_ok=True)
+            
+            filename = f"card_{card_num:02d}_row{row}_col{col}.png"
+            filepath = os.path.join(debug_dir, filename)
+            cv2.imwrite(filepath, card_image)
+            logger.debug(f"Saved debug card image: {filepath}")
+        except Exception as e:
+            logger.debug(f"Failed to save debug card image: {str(e)}")
+    
     def detect_cards_template_matching(self, image: np.ndarray, 
                                      template_path: str = None) -> List[np.ndarray]:
         """
@@ -1188,3 +1205,73 @@ class GridLayoutAnalyzer:
         v_confidence = max(0, 1 - v_cv)
         
         return (h_confidence + v_confidence) / 2
+    
+    def _detect_and_correct_rotation(self, card_image: np.ndarray) -> np.ndarray:
+        """Detect and correct card rotation for better OCR results"""
+        try:
+            # Convert to grayscale if needed
+            if len(card_image.shape) == 3:
+                gray = cv2.cvtColor(card_image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = card_image.copy()
+            
+            # Detect text lines to determine rotation
+            # Use HoughLinesP to detect straight lines which should be horizontal in properly oriented cards
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=30, maxLineGap=10)
+            
+            if lines is None or len(lines) == 0:
+                return card_image
+            
+            # Calculate angles of detected lines
+            angles = []
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
+                angles.append(angle)
+            
+            if not angles:
+                return card_image
+            
+            # Find the most common angle (mode)
+            angles = np.array(angles)
+            # Normalize angles to [-90, 90] range
+            angles = np.where(angles > 90, angles - 180, angles)
+            angles = np.where(angles < -90, angles + 180, angles)
+            
+            # Use histogram to find most common angle
+            hist, bin_edges = np.histogram(angles, bins=36, range=(-90, 90))  # 5-degree bins
+            max_bin = np.argmax(hist)
+            dominant_angle = (bin_edges[max_bin] + bin_edges[max_bin + 1]) / 2
+            
+            # Only correct if angle is significant (more than 2 degrees)
+            if abs(dominant_angle) > 2.0:
+                logger.debug(f"Detected card rotation: {dominant_angle:.2f} degrees")
+                
+                # Rotate image to correct orientation
+                height, width = card_image.shape[:2]
+                center = (width // 2, height // 2)
+                rotation_matrix = cv2.getRotationMatrix2D(center, dominant_angle, 1.0)
+                
+                # Calculate new dimensions to fit rotated image
+                cos_angle = np.abs(rotation_matrix[0, 0])
+                sin_angle = np.abs(rotation_matrix[0, 1])
+                new_width = int((height * sin_angle) + (width * cos_angle))
+                new_height = int((height * cos_angle) + (width * sin_angle))
+                
+                # Adjust translation to center the rotated image
+                rotation_matrix[0, 2] += (new_width - width) / 2
+                rotation_matrix[1, 2] += (new_height - height) / 2
+                
+                # Apply rotation
+                rotated = cv2.warpAffine(card_image, rotation_matrix, (new_width, new_height), 
+                                       flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, 
+                                       borderValue=(255, 255, 255))
+                
+                return rotated
+            
+            return card_image
+            
+        except Exception as e:
+            logger.debug(f"Rotation detection failed: {str(e)}")
+            return card_image

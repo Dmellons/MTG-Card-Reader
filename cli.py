@@ -99,7 +99,7 @@ def process(pdf_path, collection, output_dir, export_format, skip_duplicates):
             sys.exit(1)
     
     except Exception as e:
-        click.echo(f"💥 Fatal error: {str(e)}")
+        click.echo(f"Fatal error: {str(e)}")
         sys.exit(1)
 
 @cli.command()
@@ -110,16 +110,16 @@ def process(pdf_path, collection, output_dir, export_format, skip_duplicates):
 def batch(directory, collection_prefix, parallel):
     """Process all PDF files in a directory"""
     
-    click.echo(f"📁 Processing directory: {directory}")
+    click.echo(f"Processing directory: {directory}")
     
     # Find PDF files
     pdf_files = list(Path(directory).glob("*.pdf"))
     
     if not pdf_files:
-        click.echo("❌ No PDF files found in directory")
+        click.echo("No PDF files found in directory")
         sys.exit(1)
     
-    click.echo(f"📋 Found {len(pdf_files)} PDF files")
+    click.echo(f"Found {len(pdf_files)} PDF files")
     
     try:
         processor = MTGCardProcessingSystem()
@@ -130,7 +130,7 @@ def batch(directory, collection_prefix, parallel):
             bar.update(len(pdf_files))
         
         if result.get('success'):
-            click.echo("✅ Batch processing completed!")
+            click.echo("Batch processing completed!")
             click.echo(f"📊 Results:")
             click.echo(f"   • Files processed: {result.get('files_processed', 0)}")
             click.echo(f"   • Total cards stored: {result.get('total_cards_stored', 0)}")
@@ -139,7 +139,7 @@ def batch(directory, collection_prefix, parallel):
             click.echo(f"❌ Batch processing failed: {result.get('error', 'Unknown error')}")
     
     except Exception as e:
-        click.echo(f"💥 Fatal error: {str(e)}")
+        click.echo(f"Fatal error: {str(e)}")
         sys.exit(1)
 
 @cli.group()

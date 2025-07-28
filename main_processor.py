@@ -5,6 +5,8 @@ import os
 import logging
 import json
 import pandas as pd
+import re
+import uuid
 from datetime import datetime
 from typing import List, Dict, Optional
 import cv2
@@ -260,6 +262,74 @@ class MTGCardProcessingSystem:
                 logger.warning(f"No text extracted from card at page {page_idx + 1}, position {card_idx + 1}")
                 return None
             
+            # Store the card even if name extraction failed (for debugging and improvement)
+            # We'll create placeholder names for cards without extracted names or with suspicious names
+            extracted_name = extracted_data.get('name', '')
+            
+            # Check for various suspicious patterns that indicate OCR errors
+            def has_ocr_corruption(name: str) -> bool:
+                """Check if a name shows signs of OCR corruption"""
+                if not name:
+                    return False
+                name_lower = name.lower()
+                
+                # Common OCR corruption patterns
+                corruption_patterns = [
+                    'cgunt',      # "Cguntergpell" (Counterspell)
+                    'spelljack',  # False matches
+                    'gcout',      # "Gcout" (Scout)
+                    'gp',         # "gp" substitutions
+                    'cg',         # "cg" substitutions at start
+                ]
+                
+                return any(pattern in name_lower for pattern in corruption_patterns)
+            
+            is_suspicious_name = (
+                not extracted_name or  # No name
+                len(extracted_name) <= 4 or  # Very short name (like "jng", "Scuc")
+                not any(c.isalpha() for c in extracted_name) or  # No letters
+                extracted_name.lower() in ['page', 'card', 'unknown', 'null', 'none'] or  # Common placeholders
+                (extracted_name.lower().endswith('unculus') and 'hazy' in extracted_data.get('all_text', '').lower()) or  # "hornunculus" should be "Hazy Homunculus"
+                extracted_name.lower() in ['hornunculus', 'homunculus'] or  # Common OCR errors for card names
+                has_ocr_corruption(extracted_name)  # Names with OCR corruption patterns
+            )
+            
+            if is_suspicious_name:
+                logger.info(f"Suspicious name detected: '{extracted_name}' - attempting enhanced identification")
+                # Try to find a better name from the extracted text
+                better_name = self._extract_name_from_text(extracted_data.get('all_text', ''))
+                
+                # Also try pattern matching (even if we got a name from text extraction, 
+                # pattern matching might be more accurate for cards with OCR errors)
+                pattern_name = self._identify_card_from_full_text(extracted_data.get('all_text', ''))
+                
+                # Prefer pattern matching result if available, otherwise use text extraction
+                if pattern_name:
+                    extracted_data['name'] = pattern_name
+                    logger.debug(f"Used pattern matching result: {pattern_name}")
+                elif better_name:
+                    extracted_data['name'] = better_name
+                    logger.debug(f"Used text extraction result: {better_name}")
+                else:
+                    # Create a placeholder name based on position and any extracted text
+                    page_card_id = f"Page_{page_idx+1}_Card_{card_idx+1}"
+                    if extracted_data.get('all_text'):
+                        # Use first few words of extracted text as hint
+                        text_hint = ' '.join(extracted_data['all_text'].split()[:3])
+                        if text_hint and len(text_hint) > 5:  # Only use if meaningful
+                            extracted_data['name'] = f"{page_card_id}_{text_hint}"
+                        else:
+                            extracted_data['name'] = page_card_id
+                    else:
+                        extracted_data['name'] = page_card_id
+                    logger.debug(f"Created placeholder name: {extracted_data['name']}")
+            
+            # Only skip if we have absolutely no data at all
+            if (not extracted_data.get('all_text') and 
+                extracted_data.get('confidence', 0) < 0.05):
+                logger.warning(f"Absolutely no data extracted from card at page {page_idx + 1}, position {card_idx + 1}")
+                return None
+            
             # Attempt card identification
             identification_result = self.card_identifier.identify_card_comprehensive(
                 card_image,
@@ -279,14 +349,31 @@ class MTGCardProcessingSystem:
                 image_path, pdf_path, page_idx, card_idx, collection_name
             )
             
-            logger.debug(f"Processed card: {card_data.get('name', 'Unknown')} "
-                        f"(confidence: {card_data.get('confidence_score', 0):.2f})")
+            # Add processing metadata for debugging (but don't include in database storage)
+            processing_metadata = {
+                'ocr_confidence': extracted_data.get('confidence', 0),
+                'identification_confidence': identification_result.get('confidence', 0) if identification_result else 0,
+                'has_extracted_name': bool(extracted_data.get('name')),
+                'extracted_text_length': len(extracted_data.get('all_text', '')),
+                'is_placeholder_name': card_data.get('name', '').startswith('Page_'),
+            }
+            
+            logger.info(f"Processed card: {card_data.get('name', 'Unknown')} "
+                       f"(OCR conf: {extracted_data.get('confidence', 0):.2f}, "
+                       f"ID conf: {card_data.get('confidence_score', 0):.2f}, "
+                       f"Text len: {len(extracted_data.get('all_text', ''))})")
             
             return card_data
             
         except Exception as e:
+            error_msg = str(e)
+            if "'NoneType' object has no attribute 'lower'" in error_msg:
+                # Add more debug info for this specific error
+                logger.error(f"NoneType.lower() error at page {page_idx + 1}, position {card_idx + 1}. "
+                           f"Extracted data: {extracted_data.get('type_line') if 'extracted_data' in locals() else 'N/A'}, "
+                           f"Identification result: {identification_result.get('card_data', {}).get('type_line') if 'identification_result' in locals() and identification_result else 'N/A'}")
             logger.error(f"Individual card processing failed at page {page_idx + 1}, "
-                        f"position {card_idx + 1}: {str(e)}")
+                        f"position {card_idx + 1}: {error_msg}")
             return None
     
     def _compile_card_data(self, extracted_data: Dict, identification_result: Dict,
@@ -296,7 +383,7 @@ class MTGCardProcessingSystem:
         
         # Start with extracted OCR data
         card_data = {
-            'name': extracted_data.get('name', 'Unknown'),
+            'name': extracted_data.get('name') or None,  # Keep None instead of 'Unknown'
             'mana_cost': extracted_data.get('mana_cost'),
             'type_line': extracted_data.get('type_line'),
             'oracle_text': extracted_data.get('oracle_text'),
@@ -371,7 +458,12 @@ class MTGCardProcessingSystem:
                 card_data['color_identity'] = ''.join(api_data['color_identity'])
             
             if api_data.get('id'):
-                card_data['scryfall_id'] = api_data['id']
+                # Convert string UUID to UUID object for database compatibility
+                try:
+                    card_data['scryfall_id'] = uuid.UUID(api_data['id'])
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid Scryfall ID format: {api_data['id']}, error: {e}")
+                    # Don't store invalid UUIDs
             
             # Update confidence and method
             card_data['confidence_score'] = identification_result['confidence']
@@ -412,9 +504,9 @@ class MTGCardProcessingSystem:
             
             for card_data in cards_data:
                 try:
-                    # Skip cards without valid names
-                    if not card_data.get('name') or card_data.get('name') == 'Unknown':
-                        logger.warning(f"Skipping card without valid name: {card_data}")
+                    # Only skip cards if they have absolutely no name (shouldn't happen now)
+                    if not card_data.get('name'):
+                        logger.warning(f"Skipping card without any name: {card_data}")
                         errors += 1
                         continue
                     
@@ -432,8 +524,9 @@ class MTGCardProcessingSystem:
                         # TODO: Fix duplicate relationship tracking properly
                         logger.debug("Skipping duplicate relationship recording to avoid database errors")
                     else:
-                        # Create new card
-                        card = card_repo.create_card(card_data)
+                        # Create new card - filter to only valid database fields
+                        db_card_data = self._filter_card_data_for_db(card_data)
+                        card = card_repo.create_card(db_card_data)
                         new_cards += 1
                         logger.debug(f"Created new card: {card_data.get('name')}")
                 
@@ -471,6 +564,147 @@ class MTGCardProcessingSystem:
             }
         finally:
             session.close()
+    
+    def _filter_card_data_for_db(self, card_data: Dict) -> Dict:
+        """Filter card data to only include valid database fields"""
+        # Valid fields from Card model
+        valid_fields = {
+            'name', 'scryfall_id', 'mana_cost', 'converted_mana_cost', 'type_line',
+            'oracle_text', 'flavor_text', 'power', 'toughness', 'set_code', 'set_name',
+            'rarity', 'collector_number', 'colors', 'color_identity', 'image_path',
+            'source_pdf', 'source_page', 'card_position', 'processed_date',
+            'confidence_score', 'identification_method', 'collection_name'
+        }
+        
+        # Filter to only valid fields
+        filtered_data = {
+            key: value for key, value in card_data.items() 
+            if key in valid_fields and value is not None
+        }
+        
+        return filtered_data
+    
+    def _extract_name_from_text(self, all_text: str) -> Optional[str]:
+        """Try to extract a reasonable card name from the full OCR text"""
+        if not all_text:
+            return None
+        
+        # Clean up the text
+        text = all_text.strip()
+        words = text.split()
+        
+        if not words:
+            return None
+        
+        # Look for words that could be card names (avoiding common non-name words)
+        non_name_words = {
+            'creature', 'instant', 'sorcery', 'enchantment', 'artifact', 'land', 'planeswalker',
+            'flying', 'trample', 'first', 'strike', 'haste', 'vigilance', 'reach', 'deathtouch',
+            'when', 'whenever', 'until', 'end', 'turn', 'target', 'player', 'damage', 'draw', 'card',
+            'mana', 'tap', 'untap', 'counter', 'spell', 'ability', 'cost', 'pay', 'sacrifice',
+            'destroy', 'exile', 'graveyard', 'hand', 'library', 'battlefield', 'play',
+            'illus', 'illustration', 'art', 'artist', 'copyright', 'wizards', 'coast', 'inc',
+            'unblockable', 'blocked', 'blocking', 'enters', 'leaves', 'comes', 'into', 'from',
+            'defending', 'attacking', 'controls', 'controlled', 'owner', 'owners', 'control'
+        }
+        
+        # Try to find a good candidate name from the first few words
+        for i in range(min(4, len(words))):  # Check first 4 words
+            word = words[i].strip('.,!?:;')
+            
+            # Skip if it's a common non-name word, number, or very short
+            if (len(word) >= 3 and 
+                word.lower() not in non_name_words and
+                not word.isdigit() and
+                not re.match(r'^[\d\{\}/\*\(\)]+$', word)):
+                
+                # If it's a reasonable length, check for multi-word names first
+                if 3 <= len(word) <= 25:
+                    # If it's part of a multi-word name, try to get 2-3 words
+                    if i < len(words) - 1:
+                        next_word = words[i + 1].strip('.,!?:;')
+                        if (len(next_word) >= 3 and 
+                            next_word.lower() not in non_name_words and
+                            not next_word.isdigit()):
+                            
+                            # Check if there's a third word too
+                            if i < len(words) - 2:
+                                third_word = words[i + 2].strip('.,!?:;')
+                                if (len(third_word) >= 3 and 
+                                    third_word.lower() not in non_name_words and
+                                    not third_word.isdigit() and
+                                    len(f"{word} {next_word} {third_word}") <= 30):
+                                    return f"{word} {next_word} {third_word}"
+                            
+                            # Use two words if reasonable length
+                            if len(f"{word} {next_word}") <= 25:
+                                return f"{word} {next_word}"
+                    
+                    # Fall back to single word if multi-word didn't work
+                    return word
+        
+        return None
+    
+    def _identify_card_from_full_text(self, all_text: str) -> Optional[str]:
+        """Try to identify the actual card by searching for key phrases in the text"""
+        if not all_text or len(all_text) < 10:
+            return None
+        
+        # Import here to avoid circular imports
+        from card_identifier import MTGCardIdentifier
+        
+        try:
+            text = all_text.lower()
+            words = all_text.split()
+            
+            # Strategy 1: Look for unique ability text that might match cards
+            # Common MTG ability patterns that are unique to specific cards
+            unique_patterns = [
+                ('hazy homunculus', 'unblockable.*defending player controls.*untapped land'),
+                ('thalakos scout', 'shadow.*choose and discard.*return.*scout.*owner'),
+                ('wormfang crab', 'unblockable.*opponent chooses.*permanent.*removes it from.*game'),
+                ('spiketail drake', 'flying.*sacrifice.*spiketail.*counter target.*unless.*controller pays'),
+                ('phantom warrior', 'phantom warrior.*unblockable'),
+                ('capsize', 'buyback.*return target permanent.*owner.*hand'),
+                ('counterspell', 'counter target spell'),
+                ('heightened awareness', 'discard your hand.*beginning.*draw step.*draw.*card')
+            ]
+            
+            identifier = MTGCardIdentifier()
+            
+            # Try to match unique patterns
+            for card_name, pattern in unique_patterns:
+                if re.search(pattern, text, re.IGNORECASE | re.DOTALL):
+                    logger.info(f"PATTERN MATCH found for {card_name}: {pattern[:50]}...")
+                    # Try to identify this card
+                    result = identifier.identify_by_name(card_name)
+                    if result:
+                        logger.info(f"Successfully identified card: {card_name} -> {result.get('name')}")
+                        return result.get('name')
+                    else:
+                        logger.warning(f"Pattern matched but API lookup failed for: {card_name}")
+            
+            # Strategy 2: Try common combinations of words that might be card names
+            for i in range(len(words) - 1):
+                for j in range(i + 1, min(i + 4, len(words))):  # Try 2-3 word combinations
+                    candidate = ' '.join(words[i:j+1])
+                    candidate = re.sub(r'[^\w\s]', '', candidate)  # Remove punctuation
+                    
+                    if (len(candidate) >= 6 and 
+                        len(candidate) <= 30 and
+                        not candidate.lower().startswith(('when', 'whenever', 'target', 'return', 'draw', 'counter'))):
+                        
+                        # Try fuzzy matching with this candidate
+                        result = identifier.identify_by_name(candidate)
+                        if result:
+                            logger.debug(f"Found card via fuzzy matching: {candidate} -> {result.get('name')}")
+                            return result.get('name')
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Card identification from full text failed: {str(e)}")
+            return None
     
     def _generate_exports(self, collection_name: str) -> Dict:
         """Generate export files for the processed collection"""

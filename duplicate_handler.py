@@ -106,7 +106,9 @@ class DuplicateHandler:
         similar_cards = card_repo.find_similar_cards(name, limit=1)
         
         for card in similar_cards:
-            if card.name.lower() == name.lower():
+            if (card.name and name and 
+                isinstance(card.name, str) and isinstance(name, str) and
+                card.name.lower() == name.lower()):
                 logger.debug(f"Name-only match found: {name}")
                 return card
         
@@ -168,7 +170,7 @@ class DuplicateHandler:
     
     def _normalize_name(self, name: str) -> str:
         """Normalize card name for better matching"""
-        if not name:
+        if not name or not isinstance(name, str):
             return ""
         
         # Convert to lowercase and remove extra whitespace
@@ -455,9 +457,13 @@ class DuplicateAnalyzer:
                 similarity = dup['similarity_score']
                 
                 # Classify duplicate cause
-                if similarity > 0.9 and original_name and dup_name and original_name.lower() != dup_name.lower():
+                if (similarity > 0.9 and original_name and dup_name and 
+                    isinstance(original_name, str) and isinstance(dup_name, str) and
+                    original_name.lower() != dup_name.lower()):
                     causes['ocr_errors'] += 1
-                elif original_name and dup_name and original_name.lower() == dup_name.lower():
+                elif (original_name and dup_name and 
+                      isinstance(original_name, str) and isinstance(dup_name, str) and
+                      original_name.lower() == dup_name.lower()):
                     causes['legitimate_reprints'] += 1
                 elif 0.7 <= similarity <= 0.9:
                     causes['image_quality'] += 1

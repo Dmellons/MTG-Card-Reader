@@ -49,10 +49,10 @@ class MTGCardIdentifier:
         Identify card using fuzzy name matching via Scryfall API
         Returns complete card data if found
         """
-        if not card_name or len(card_name.strip()) < 2:
+        if not card_name or not isinstance(card_name, str) or len(card_name.strip()) < 2:
             return None
         
-        cache_key = f"{card_name.lower()}:{set_code or 'any'}"
+        cache_key = f"{card_name.lower()}:{set_code.lower() if set_code else 'any'}"
         if cache_key in self.api_cache:
             logger.debug(f"Cache hit for {card_name}")
             return self.api_cache[cache_key]
@@ -61,7 +61,7 @@ class MTGCardIdentifier:
             self._rate_limit()
             
             params = {'fuzzy': card_name.strip()}
-            if set_code:
+            if set_code and isinstance(set_code, str):
                 params['set'] = set_code.lower()
             
             logger.debug(f"API request for card: {card_name}")
@@ -396,7 +396,7 @@ class FuzzyMatcher:
     @staticmethod
     def _normalize_name(name: str) -> str:
         """Normalize card name for better matching"""
-        if not name:
+        if not name or not isinstance(name, str):
             return ""
         
         # Convert to lowercase
@@ -510,7 +510,8 @@ class HybridIdentifier:
                 method = 'api_exact'
                 
                 # Lower confidence if name doesn't match exactly
-                if card_name and card_data.get('name', '').lower() != card_name.lower():
+                if (card_name and isinstance(card_name, str) and 
+                    card_data.get('name', '').lower() != card_name.lower()):
                     confidence = self.method_weights['api_fuzzy']
                     method = 'api_fuzzy'
                 
@@ -674,7 +675,7 @@ class CardDatabaseBuilder:
 
 # Utility functions
 def validate_identification_result(result: Dict) -> bool:
-    """Validate that an identification result is reasonable"""
+    """Enhanced validation for identification results using MTG card standards"""
     if not result or not result.get('success'):
         return False
     
@@ -686,12 +687,100 @@ def validate_identification_result(result: Dict) -> bool:
     if not card_data:
         return False
     
-    # Check that card data has reasonable fields
+    # Enhanced card name validation
     name = card_data.get('name', '')
-    if not name or len(name) < 2:
+    if not _validate_card_name(name):
+        return False
+    
+    # Validate other card attributes if present
+    if not _validate_card_attributes(card_data):
         return False
     
     return True
+
+def _validate_card_name(name: str) -> bool:
+    """Validate that a card name is reasonable"""
+    if not name or not isinstance(name, str):
+        return False
+    
+    name = name.strip()
+    if len(name) < 2 or len(name) > 50:
+        return False
+    
+    # Must contain at least one letter
+    if not re.search(r'[a-zA-Z]', name):
+        return False
+    
+    # Filter out obvious non-names
+    invalid_patterns = [
+        r'^\d+$',  # Only numbers
+        r'^[^\w\s]+$',  # Only special characters
+        r'^\d+/\d+$',  # Power/toughness only
+        r'^\{[WUBRGCTXYS0-9/]+\}$',  # Mana cost only
+    ]
+    
+    for pattern in invalid_patterns:
+        if re.match(pattern, name):
+            return False
+    
+    return True
+
+def _validate_card_attributes(card_data: Dict) -> bool:
+    """Validate card attributes for consistency"""
+    # Validate mana cost format if present
+    mana_cost = card_data.get('mana_cost')
+    if mana_cost and not _validate_mana_cost(mana_cost):
+        return False
+    
+    # Validate power/toughness if present
+    power = card_data.get('power')
+    toughness = card_data.get('toughness')
+    if (power is not None or toughness is not None):
+        if not _validate_power_toughness(power, toughness):
+            return False
+    
+    # Validate type line if present
+    type_line = card_data.get('type_line')
+    if type_line and not _validate_type_line(type_line):
+        return False
+    
+    return True
+
+def _validate_mana_cost(mana_cost: str) -> bool:
+    """Validate mana cost format"""
+    if not mana_cost:
+        return True
+    
+    # Should match MTG mana cost pattern
+    pattern = r'^(\{[WUBRGCTXYS0-9]+(/[WUBRG])?\})*$'
+    return bool(re.match(pattern, mana_cost))
+
+def _validate_power_toughness(power, toughness) -> bool:
+    """Validate power/toughness values"""
+    if power is None and toughness is None:
+        return True
+    
+    # Both should be present for creatures
+    if power is None or toughness is None:
+        return False
+    
+    # Should be numbers or *
+    valid_pt = r'^(\d+|\*)$'
+    return (re.match(valid_pt, str(power)) and re.match(valid_pt, str(toughness)))
+
+def _validate_type_line(type_line: str) -> bool:
+    """Validate type line format"""
+    if not type_line or not isinstance(type_line, str):
+        return True
+    
+    # Should contain at least one valid MTG type
+    mtg_types = [
+        'artifact', 'creature', 'enchantment', 'instant', 'land', 
+        'planeswalker', 'sorcery', 'tribal', 'legendary', 'basic'
+    ]
+    
+    type_line_lower = type_line.lower()
+    return any(mtg_type in type_line_lower for mtg_type in mtg_types)
 
 def merge_identification_results(results: List[Dict]) -> Dict:
     """Merge multiple identification results into a consensus"""
@@ -805,7 +894,7 @@ class CardDatabaseBuilder:
 
 # Utility functions
 def validate_identification_result(result: Dict) -> bool:
-    """Validate that an identification result is reasonable"""
+    """Enhanced validation for identification results using MTG card standards"""
     if not result or not result.get('success'):
         return False
     
@@ -817,12 +906,100 @@ def validate_identification_result(result: Dict) -> bool:
     if not card_data:
         return False
     
-    # Check that card data has reasonable fields
+    # Enhanced card name validation
     name = card_data.get('name', '')
-    if not name or len(name) < 2:
+    if not _validate_card_name(name):
+        return False
+    
+    # Validate other card attributes if present
+    if not _validate_card_attributes(card_data):
         return False
     
     return True
+
+def _validate_card_name(name: str) -> bool:
+    """Validate that a card name is reasonable"""
+    if not name or not isinstance(name, str):
+        return False
+    
+    name = name.strip()
+    if len(name) < 2 or len(name) > 50:
+        return False
+    
+    # Must contain at least one letter
+    if not re.search(r'[a-zA-Z]', name):
+        return False
+    
+    # Filter out obvious non-names
+    invalid_patterns = [
+        r'^\d+$',  # Only numbers
+        r'^[^\w\s]+$',  # Only special characters
+        r'^\d+/\d+$',  # Power/toughness only
+        r'^\{[WUBRGCTXYS0-9/]+\}$',  # Mana cost only
+    ]
+    
+    for pattern in invalid_patterns:
+        if re.match(pattern, name):
+            return False
+    
+    return True
+
+def _validate_card_attributes(card_data: Dict) -> bool:
+    """Validate card attributes for consistency"""
+    # Validate mana cost format if present
+    mana_cost = card_data.get('mana_cost')
+    if mana_cost and not _validate_mana_cost(mana_cost):
+        return False
+    
+    # Validate power/toughness if present
+    power = card_data.get('power')
+    toughness = card_data.get('toughness')
+    if (power is not None or toughness is not None):
+        if not _validate_power_toughness(power, toughness):
+            return False
+    
+    # Validate type line if present
+    type_line = card_data.get('type_line')
+    if type_line and not _validate_type_line(type_line):
+        return False
+    
+    return True
+
+def _validate_mana_cost(mana_cost: str) -> bool:
+    """Validate mana cost format"""
+    if not mana_cost:
+        return True
+    
+    # Should match MTG mana cost pattern
+    pattern = r'^(\{[WUBRGCTXYS0-9]+(/[WUBRG])?\})*$'
+    return bool(re.match(pattern, mana_cost))
+
+def _validate_power_toughness(power, toughness) -> bool:
+    """Validate power/toughness values"""
+    if power is None and toughness is None:
+        return True
+    
+    # Both should be present for creatures
+    if power is None or toughness is None:
+        return False
+    
+    # Should be numbers or *
+    valid_pt = r'^(\d+|\*)$'
+    return (re.match(valid_pt, str(power)) and re.match(valid_pt, str(toughness)))
+
+def _validate_type_line(type_line: str) -> bool:
+    """Validate type line format"""
+    if not type_line or not isinstance(type_line, str):
+        return True
+    
+    # Should contain at least one valid MTG type
+    mtg_types = [
+        'artifact', 'creature', 'enchantment', 'instant', 'land', 
+        'planeswalker', 'sorcery', 'tribal', 'legendary', 'basic'
+    ]
+    
+    type_line_lower = type_line.lower()
+    return any(mtg_type in type_line_lower for mtg_type in mtg_types)
 
 def merge_identification_results(results: List[Dict]) -> Dict:
     """Merge multiple identification results into a consensus"""
